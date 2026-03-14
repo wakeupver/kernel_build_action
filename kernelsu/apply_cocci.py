@@ -11,7 +11,7 @@ from pathlib import Path
 
 def download_cocci_file(filename: str) -> None:
     """Download the cocci file from GitHub."""
-    url = f"https://github.com/dabao1955/kernel_build_action/raw/main/kernelsu/{filename}"
+    url = f"https://github.com/wakeupver/kernel_build_action/raw/main/kernelsu/{filename}"
     try:
         subprocess.run(
             ["aria2c", url],
