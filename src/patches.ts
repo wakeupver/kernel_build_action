@@ -67,7 +67,7 @@ export async function setupKernelSU(
   if (!kernelVersion.isGki && !options.other) {
     core.warning(`Warning: KernelSU has dropped support for non-GKI kernels since 0.9.5.`);
     core.info('Forcing switch to v0.9.5');
-    kver = 'legacy';
+    kver = '3.1.0-legacy';
   }
 
   // Run setup script (use relative path since cwd is set to kernelDir)
