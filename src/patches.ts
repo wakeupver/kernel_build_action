@@ -91,21 +91,25 @@ export async function setupKernelSU(
     if (!hasKprobes) {
       core.info('CONFIG_KPROBES not enabled, applying KernelSU patches...');
 
-      // Setup opam and coccinelle
-      await exec.exec('opam', ['init', '--disable-sandboxing', '--yes']);
-
-      // Install coccinelle with opam environment evaluated
-      await exec.exec('bash', ['-c', 'eval $(opam env) && opam install --yes coccinelle']);
-
-      // Apply patches with opam environment evaluated
-      const applyCocciPath = path.join(getActionPath(), 'kernelsu', 'apply_cocci.py');
+      // ==========================================
+      // EDITED: Use direct bash script instead of OPAM + Coccinelle + Python
+      // ==========================================
+      const patchScriptPath = path.join(getActionPath(), 'kernelsu', 'syscall_hook_patches.sh');
+      
       try {
-        await exec.exec('bash', ['-c', `eval $(opam env) && python3 ${applyCocciPath}`], {
+        // Make script executable
+        fs.chmodSync(patchScriptPath, '0755');
+        
+        // Execute patch script directly - no setup needed
+        await exec.exec('bash', [patchScriptPath], {
           cwd: kernelDir,
         });
+        
+        core.info('✓ KernelSU patches applied successfully');
       } catch {
         core.warning('Failed to apply KernelSU patches');
       }
+      // ==========================================
     }
   }
 
