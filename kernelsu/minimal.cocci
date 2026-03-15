@@ -255,6 +255,26 @@ error = vfs_fstatat(dfd, filename, &stat, flag);
 ...
 }
 
+// File: kernel/reboot.c
+// Adds hook to SYSCALL_DEFINE4(reboot, ...).
+
+@sys_reboot_hook_minimized depends on file in "kernel/reboot.c"@
+identifier magic1, magic2, cmd, arg;
+attribute name __user;
+@@
+
++#ifdef CONFIG_KSU
++extern int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd,
++			void __user **arg);
++#endif
+reboot(int magic1, int magic2, unsigned int cmd, void __user *arg) {
+...
++#ifdef CONFIG_KSU
++	ksu_handle_sys_reboot(magic1, magic2, cmd, &arg);
++#endif
+...
+}
+
 // File: drivers/input/input.c
 // Adds hook to input_event(...).
 
