@@ -57,8 +57,8 @@ def apply_spatch(cocci_file: str, target_file: str) -> None:
 
 def main() -> None:
     """Main entry point for applying KernelSU Coccinelle patches."""
-    sp_file = "minimal.cocci"
-    # sp_file = "classic.cocci"
+    # sp_file = "minimal.cocci"
+    sp_file = "classic.cocci"
 
     # Download the cocci file
     download_cocci_file(sp_file)
