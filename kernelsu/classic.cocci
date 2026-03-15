@@ -1,56 +1,66 @@
-// File: fs/devpts/inode.c
-
-@devpts_get_priv depends on file in "fs/devpts/inode.c"@
-identifier dentry;
-statement S1, S2;
-@@
-
-+#ifdef CONFIG_KSU
-+extern int ksu_handle_devpts(struct inode*);
-+#endif
-devpts_get_priv(struct dentry *dentry) {
-... when != S1
-+#ifdef CONFIG_KSU
-+ksu_handle_devpts(dentry->d_inode);
-+#endif
-S2
-...
-}
+// ============================================================
+// classic.cocci — KernelSU-Next manual hooks for non-GKI kernels
+// Reference: https://kernelsu-next.github.io/webpage/pages/how-to-integrate-for-non-gki.html
+// ============================================================
 
 
+// ============================================================
 // File: fs/exec.c
-@depends on file in "fs/exec.c"@
-attribute name __read_mostly;
-identifier fd, filename, argv, envp, flags;
-statement S1, S2;
+// Hook: do_execve — add ksu_handle_execveat call
+// ============================================================
+
+@exec_do_execve depends on file in "fs/exec.c"@
+attribute name __user;
+identifier filename, argv, envp;
 @@
 
 +#ifdef CONFIG_KSU
-+extern bool ksu_execveat_hook __read_mostly;
-+extern int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv, void *envp, int *flags);
-+extern int ksu_handle_execveat_sucompat(int *fd, struct filename **filename_ptr, void *argv, void *envp, int *flags);
++__attribute__((hot))
++extern int ksu_handle_execveat(int *fd, struct filename **filename_ptr,
++				void *argv, void *envp, int *flags);
 +#endif
-do_execveat_common(int fd, struct filename *filename, struct user_arg_ptr argv, struct user_arg_ptr envp, int flags) {
-... when != S1
-+#ifdef CONFIG_KSU
-+if (unlikely(ksu_execveat_hook))
-+  ksu_handle_execveat(&fd, &filename, &argv, &envp, &flags);
-+else
-+  ksu_handle_execveat_sucompat(&fd, &filename, &argv, &envp, &flags);
-+#endif
-S2
+do_execve(struct filename *filename,
+	const char __user *const __user *__argv,
+	const char __user *const __user *__envp) {
 ...
++#ifdef CONFIG_KSU
++ksu_handle_execveat((int *)AT_FDCWD, &filename, &argv, &envp, 0);
++#endif
+  return do_execveat_common(AT_FDCWD, filename, argv, envp, 0);
 }
 
+// ============================================================
+// File: fs/exec.c
+// Hook: compat_do_execve — 32-bit ksud and 32-on-64 support
+// ============================================================
+
+@exec_compat_do_execve depends on file in "fs/exec.c"@
+identifier filename, argv, envp;
+@@
+
+compat_do_execve(struct filename *filename, ...) {
+...
++#ifdef CONFIG_KSU // 32-bit ksud and 32-on-64 support
++ksu_handle_execveat((int *)AT_FDCWD, &filename, &argv, &envp, 0);
++#endif
+  return do_execveat_common(AT_FDCWD, filename, argv, envp, 0);
+}
+
+// ============================================================
 // File: fs/open.c
-@do_faccesssat depends on file in "fs/open.c"@
+// Hook: do_faccessat (newer kernels)
+// ============================================================
+
+@do_faccessat depends on file in "fs/open.c"@
 attribute name __user;
 identifier dfd, filename, mode;
 statement S1, S2;
 @@
 
 +#ifdef CONFIG_KSU
-+extern int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int *mode, int *flags);
++__attribute__((hot))
++extern int ksu_handle_faccessat(int *dfd, const char __user **filename_user,
++				int *mode, int *flags);
 +#endif
 do_faccessat(int dfd, const char __user *filename, int mode) {
 ... when != S1
@@ -61,18 +71,24 @@ S2
 ...
 }
 
+// ============================================================
 // File: fs/open.c
-@syscall_faccesssat depends on file in "fs/open.c" && never do_faccesssat@
+// Hook: SYSCALL_DEFINE3(faccessat, ...) — older kernels without do_faccessat
+// ============================================================
+
+@syscall_faccessat depends on file in "fs/open.c" && never do_faccessat@
 attribute name __user;
 identifier dfd, filename, mode;
 statement S1, S2;
 @@
 
 +#ifdef CONFIG_KSU
-+extern int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int *mode, int *flags);
++__attribute__((hot))
++extern int ksu_handle_faccessat(int *dfd, const char __user **filename_user,
++				int *mode, int *flags);
 +#endif
 // SYSCALL_DEFINE3(faccessat, ...) {}
-faccessat(int dfd, const char __user * filename, int mode) {
+faccessat(int dfd, const char __user *filename, int mode) {
 ... when != S1
 +#ifdef CONFIG_KSU
 +ksu_handle_faccessat(&dfd, &filename, &mode, NULL);
@@ -81,37 +97,117 @@ S2
 ...
 }
 
-// File: drivers/input/input.c
-@input_handle_event depends on file in "drivers/input/input.c"@
-attribute name __read_mostly;
-identifier disposition, dev, type, code, value;
+// ============================================================
+// File: fs/read_write.c
+// Hook: SYSCALL_DEFINE3(read, ...) — intercept sys_read
+// ============================================================
+
+@sys_read depends on file in "fs/read_write.c"@
+attribute name __read_mostly, __user;
+identifier fd, buf, count;
+statement S1, S2;
 @@
 
-+#if defined(CONFIG_KSU_KPROBES_HOOK) || defined(CONFIG_KSU_HOOK_KPROBES) || defined(CONFIG_KSU_WITH_KPROBES)
-+#error KernelSU: Manual hooks are incompatible with CONFIG_KSU_KPROBES_HOOK, CONFIG_KSU_HOOK_KPROBES, or CONFIG_KSU_WITH_KPROBES. Disable them in your defconfig and/or KSU config.
-+#endif
-+
 +#ifdef CONFIG_KSU
-+extern bool ksu_input_hook __read_mostly;
-+extern int ksu_handle_input_handle_event(unsigned int *type, unsigned int *code, int *value);
++extern bool ksu_vfs_read_hook __read_mostly;
++extern __attribute__((cold)) int ksu_handle_sys_read(unsigned int fd,
++				char __user **buf_ptr, size_t *count_ptr);
 +#endif
-input_handle_event(struct input_dev *dev, unsigned int type, unsigned int code, int value) {
-...
-int disposition = input_get_disposition(dev, type, code, &value);
+read(unsigned int fd, char __user *buf, size_t count) {
+... when != S1
 +#ifdef CONFIG_KSU
-+if (unlikely(ksu_input_hook))
-+  ksu_handle_input_handle_event(&type, &code, &value);
++if (unlikely(ksu_vfs_read_hook))
++  ksu_handle_sys_read(fd, &buf, &count);
 +#endif
+S2
 ...
 }
 
+// ============================================================
+// File: fs/stat.c
+// Hook: SYSCALL_DEFINE4(newfstatat, ...) — vfs_statx variant (newer kernels)
+// ============================================================
+
+@stat_vfs_statx depends on file in "fs/stat.c"@
+attribute name __user;
+identifier dfd, filename, flags;
+statement S1, S2;
+@@
+
++#ifdef CONFIG_KSU
++__attribute__((hot))
++extern int ksu_handle_stat(int *dfd, const char __user **filename_user,
++				int *flags);
++#endif
+vfs_statx(int dfd, const char __user *filename, int flags, ...) {
+... when != S1
++#ifdef CONFIG_KSU
++ksu_handle_stat(&dfd, &filename, &flags);
++#endif
+S2
+...
+}
+
+// ============================================================
+// File: fs/stat.c
+// Hook: SYSCALL_DEFINE4(newfstatat, ...) — vfs_fstatat fallback (older kernels)
+// ============================================================
+
+@stat_newfstatat depends on file in "fs/stat.c" && never stat_vfs_statx@
+attribute name __user;
+identifier dfd, filename, statbuf, flag;
+statement S1, S2;
+@@
+
++#ifdef CONFIG_KSU
++__attribute__((hot))
++extern int ksu_handle_stat(int *dfd, const char __user **filename_user,
++				int *flags);
++#endif
+newfstatat(int dfd, const char __user *filename,
+		struct stat __user *statbuf, int flag) {
+... when != S1
++#ifdef CONFIG_KSU
++ksu_handle_stat(&dfd, &filename, &flag);
++#endif
+S2
+...
+}
+
+// ============================================================
+// File: kernel/reboot.c
+// Hook: SYSCALL_DEFINE4(reboot, ...) — intercept sys_reboot
+// ============================================================
+
+@sys_reboot depends on file in "kernel/reboot.c"@
+attribute name __user;
+identifier magic1, magic2, cmd, arg;
+statement S1, S2;
+@@
+
++#ifdef CONFIG_KSU
++extern int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd,
++				void __user **arg);
++#endif
+reboot(int magic1, int magic2, unsigned int cmd, void __user *arg) {
+... when != S1
++#ifdef CONFIG_KSU
++ksu_handle_sys_reboot(magic1, magic2, cmd, &arg);
++#endif
+S2
+...
+}
+
+// ============================================================
 // File: fs/namespace.c
+// Add can_umount + path_umount if missing (needed for KSU mount support)
+// ============================================================
+
 @has_can_umount depends on file in "fs/namespace.c"@
 identifier path, flags;
 @@
 can_umount(const struct path *path, int flags) { ... }
 
-// File: fs/namespace.c
 @path_umount depends on file in "fs/namespace.c" && never has_can_umount@
 @@
 +static int can_umount(const struct path *path, int flags)
@@ -148,62 +244,3 @@ can_umount(const struct path *path, int flags) { ... }
 +return ret;
 +}
 mnt_alloc_id(...) { ... }
-
-
-// File: fs/read_write.c
-@vfs_read depends on file in "fs/read_write.c"@
-attribute name __read_mostly, __user;
-identifier file, buf, count, pos;
-statement S1, S2;
-@@
-
-+#ifdef CONFIG_KSU
-+extern bool ksu_vfs_read_hook __read_mostly;
-+extern int ksu_handle_vfs_read(struct file **file_ptr, char __user **buf_ptr, size_t *count_ptr, loff_t **pos);
-+#endif
-vfs_read(struct file *file, char __user *buf, size_t count, loff_t *pos) {
-... when != S1
-+#ifdef CONFIG_KSU
-+if (unlikely(ksu_vfs_read_hook))
-+  ksu_handle_vfs_read(&file, &buf, &count, &pos);
-+#endif
-S2
-...
-}
-
-// File: fs/stat.c
-@vfs_statx depends on file in "fs/stat.c"@
-attribute name __user;
-identifier dfd, filename, flags;
-statement S1, S2;
-@@
-
-+#ifdef CONFIG_KSU
-+extern int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags);
-+#endif
-vfs_statx(int dfd, const char __user *filename, int flags, ...) {
-... when != S1
-+#ifdef CONFIG_KSU
-+ksu_handle_stat(&dfd, &filename, &flags);
-+#endif
-S2
-...
-}
-
-// File: fs/stat.c
-@vfs_fstatat depends on file in "fs/stat.c" && never vfs_statx@
-attribute name __user;
-identifier dfd, filename, stat, flag;
-statement S1, S2;
-@@
-+#ifdef CONFIG_KSU
-+extern int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags);
-+#endif
-vfs_fstatat(int dfd, const char __user *filename, struct kstat *stat, int flag) {
-... when != S1
-+#ifdef CONFIG_KSU
-+ksu_handle_stat(&dfd, &filename, &flag);
-+#endif
-S2
-...
-}
